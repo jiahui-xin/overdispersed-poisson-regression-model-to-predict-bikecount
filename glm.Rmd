@@ -1,0 +1,327 @@
+---
+title: "GLM data analysis"
+author: "Jiahui Xin"
+date: "2022/6/3"
+output: 
+  pdf_document: 
+    latex_engine: xelatex
+    toc: yes
+---
+# Abstract and Prerequisites
+
+This report mainly contain three parts: *data description*, *data preparation* and *data analysis and diagnostic test*. The analysis results are in *data analysis and diagnostic test*.
+
+Due to complex structure of my dataset, data preparation and reconstruction costs some space.
+
+```{r,warning=FALSE}
+library(MASS)
+
+```
+
+# Data Description
+
+*Data Source*
+```{r}
+bike<-read.csv("https://archive.ics.uci.edu/ml/machine-learning-databases/00560/SeoulBikeData.csv")
+```
+
+[*Seoul Bike Sharing Demand Data Set* from UCI Machine Learning Repository (page link is here)](https://archive.ics.uci.edu/ml/machine-learning-databases/00560/)
+
+The following information is cited from the website. The goal is to predict the bike demand using other variables.
+
+*Data Abstract*
+
+The dataset contains count of public bikes rented at each hour in Seoul Bike haring System with the corresponding Weather data and Holidays information
+
+* Data Set Characteristics:   Multivariate
+
+* Number of Instances: 8760
+
+* Attribute Characteristics: Integer, Real
+
+* Number of Attributes: 14
+
+* Associated Tasks: Regression
+
+...
+
+
+
+
+
+# Data Preparation
+
+```{r}
+
+names(bike)[4:11]<-c("Temperature","Humidity","Wind.speed",
+                     "Visibility","Dew.point.temperature",
+                     "Solar.Radiation","Rainfall","Snowfall")
+bike$Hour=as.factor(bike$Hour)
+bike$Seasons=as.factor((bike$Seasons))
+bike$Holiday=as.factor(bike$Holiday)
+bike$Functioning.Day=as.factor(bike$Functioning.Day)
+summary(bike)
+head(bike,3)
+```
+
+
+## time series plot
+```{r}
+par(mfrow=c(2,1))
+with(bike,plot(Rented.Bike.Count[1:(24*7)],type="l",ylab="Count",main="COUNT PER HOUR IN 7 DAYS"))
+with(bike,plot(Rented.Bike.Count[1:(24*365)],type="l",ylab="Count",main="COUNT PER HOUR IN 365 DAYS"))
+par(mfrow=c(2,2))
+with(bike,plot(Rented.Bike.Count[Seasons=="Winter"],type="l",ylab="Count",main="Winter"))
+with(bike,plot(Rented.Bike.Count[Seasons=="Spring"],type="l",ylab="Count",main="Spring"))
+with(bike,plot(Rented.Bike.Count[Seasons=="Summer"],type="l",ylab="Count",main="Summer"))
+with(bike,plot(Rented.Bike.Count[Seasons=="Autumn"],type="l",ylab="Count",main="Autumn"))
+```
+
+Notice that number of unfunctioning observations 295 cannot be divided by 24 exactly. Find these specific unfunctioning days. 
+
+```{r}
+summary(as.factor(with(bike,Date[Functioning.Day=="No"])))
+#with(bike,bike[Date=="06/10/2018",])
+with(bike,Rented.Bike.Count [Date=="06/10/2018"])
+```
+
+We treated the day *06/10/2018* as "Functioning.Day==Yes" because it only has 7 hours without functioning.
+
+## Heterogeneity of variable *Rented.Bike.Count* between other variabls
+```{r}
+
+par(mfrow=c(3,4))
+for(i in 2*(0:11))
+with(bike,hist(Rented.Bike.Count[Hour==i],xlab=paste("Hour=",i),main="Rented.Bike.Count"))
+```
+```{r}
+par(mfrow=c(3,3))
+with(bike,hist(Rented.Bike.Count[Seasons=="Winter"],main="Rented.Bike.Count"))
+with(bike,hist(Rented.Bike.Count[Seasons=="Spring"],main="Rented.Bike.Count"))
+with(bike,hist(Rented.Bike.Count[Seasons=="Summer"],main="Rented.Bike.Count"))
+with(bike,hist(Rented.Bike.Count[Seasons=="Autumn"],main="Rented.Bike.Count"))
+with(bike,hist(Rented.Bike.Count[Holiday=="No Holiday"],main="Rented.Bike.Count"))
+with(bike,hist(Rented.Bike.Count[Holiday=="Holiday"],main="Rented.Bike.Count"))
+with(bike,hist(Rented.Bike.Count[Functioning.Day=="Yes"],main="Rented.Bike.Count"))
+with(bike,hist(Rented.Bike.Count[Functioning.Day=="No"],main="Rented.Bike.Count"))
+```
+
+
+# Data analysis and Diagnostic test
+
+## Poisson Regressin and quasi-poisson regression
+
+```{r}
+fitGlm1 = glm(Rented.Bike.Count ~ . -Date, family = poisson(link = "log"), data = bike)
+```
+
+
+```{r}
+fitNew = update(fitGlm1, family = quasipoisson())
+summary(fitNew)
+```
+
+All variables are not significant. And the diagnostic plots seem bad too.
+
+```{r}
+par(mfrow=c(1,2))
+plot(predict(fitNew, type="response"),resid(fitNew,type="response"))
+plot(predict(fitNew, type="response"),bike$Rented.Bike.Count)
+lines(1:40000,1:40000,col=2)
+```
+
+## Reconstruct the data *bike.day* and refit
+
+### Sum the counts in one day and use the count per day
+
+```{r}
+bike.day=data.frame(bike[1:365,])
+is.num=c()
+for(i in 1:14) is.num<-c(is.num, is.numeric(bike[,i]))
+for(i in 1:365){
+  for(j in 1:14){
+    if(is.num[j]==TRUE)
+      bike.day[i,j]=mean(bike[(1+24*(i-1)):(24*i),j])
+    else
+      bike.day[i,j]=bike[24*i,j]
+  }
+}
+bike.day$Hour=NULL
+
+bike.day$Rented.Bike.Count=24*bike.day$Rented.Bike.Count
+bike.day$Seasons=as.factor((bike.day$Seasons))
+bike.day$Holiday=as.factor(bike.day$Holiday)
+bike.day$Functioning.Day=as.factor(bike.day$Functioning.Day)
+```
+
+```{r}
+summary(bike.day)
+```
+
+
+### Visualisation agian (easily got the heterogeneity between sesons)
+
+```{r}
+par(mfrow=c(2,1))
+with(bike.day,plot(Rented.Bike.Count[1:7],type="l",ylab="Count",main="COUNT PER HOUR IN 7 DAYS"))
+with(bike.day,plot(Rented.Bike.Count[1:365],type="l",ylab="Count",main="COUNT PER HOUR IN 365 DAYS"))
+par(mfrow=c(2,2))
+with(bike.day,plot(Rented.Bike.Count[Seasons=="Winter"],type="l",ylab="Count",main="Winter"))
+with(bike.day,plot(Rented.Bike.Count[Seasons=="Spring"],type="l",ylab="Count",main="Spring"))
+with(bike.day,plot(Rented.Bike.Count[Seasons=="Summer"],type="l",ylab="Count",main="Summer"))
+with(bike.day,plot(Rented.Bike.Count[Seasons=="Autumn"],type="l",ylab="Count",main="Autumn"))
+```
+
+
+
+
+### Delete obsevations with Functioning.Day==No and refit
+
+The reason is that we can set the count=0 at these days. (And it is truth from data.)
+
+```{r}
+vec=bike.day$Functioning.Day=="Yes"# only run once
+```
+```{r}
+bike.day=bike.day[vec,]
+bike.day$Functioning.Day=NULL
+bike.day$Date=NULL
+```
+
+
+```{r}
+fitGlm2 = glm(Rented.Bike.Count ~ ., family = poisson(link = "log"), data = bike.day)
+#par(mfrow = c(2, 2))
+#plot(fitGlm2) # diagnostic plot
+res2 = summary(fitGlm2) # check coefficients
+res2
+sum(resid(fitGlm2, type = "pearson")^2) / fitGlm2$df.residual # mean of pearson residuals squared
+```
+
+The summary shows that every variables are so significant. But mean of pearson residuals squared is more than 1000 which means great overdispersion.
+
+```{r}
+fitNew2 = update(fitGlm2, family = quasipoisson())#refit quasi-poisson
+summary(fitNew2)
+
+par(mfrow=c(2,2))
+plot(fitNew2)
+```
+
+Refit quasi-poisson model and diagnostic plots are all great. (Even Normal Q-Q plot is so good that we do not need robust regression or something.)
+
+*Intepretation of results*
+
+* Among variables, only *Temperature*, *Humidity* and *Visibility* are not significant (p-value > 0.05); among other variables, *Solar.Radiation*, *Rainfall*, *Wind.speed*, *Seasons* and *Holiday* are super significant (p-value < 0.01). 
+
+* Only *Dew.point.temperature*, *Solar.Radiation* and *HolidayNo Holiday* has positive coefficients. It is clear that in sunny workdays without rain or snow, people will rent more bikes.
+
+All the above seem reasonable.
+
+
+
+
+### try to remove some unsignificant variables
+```{r}
+fitNew3 = glm(Rented.Bike.Count ~ .-Temperature-Humidity-Visibility, family = quasipoisson(), data = bike.day)
+summary(fitNew3)
+anova(fitNew2,fitNew3,test = "Chisq")
+```
+
+*fitNew3* as a simplified model of *fitNew2* is ok. At least it passes the anova chisq test and keeps all left variables significant with similar coefficients.
+
+## Extended model assessment
+
+```{r}
+par(mfrow=c(1,2))
+plot(predict(fitNew3, type="response"),resid(fitNew3,type="working"),main="Working residuals v.s. Response fitted")
+abline(h=0,col=2)
+plot(predict(fitNew3, type="response"),bike.day$Rented.Bike.Count,main="Response true v.s. Response fitted")
+lines(1:40000,1:40000,col=2)
+```
+
+```{r}
+list=predict(fitNew3, type="response",se.fit=TRUE)
+#list$fit
+#list$se.fit
+pred.high=list$fit+1.96*list$se.fit
+pred.low=list$fit-1.96*list$se.fit
+plot(list$fit,type="l",col=1,ylab="Count",xlab="Day Index",main="Predicted Curve with True Points")
+#lines(pred.high,col=3)
+#lines(pred.low,col=4)
+points(bike.day$Rented.Bike.Count,col=2,cex=0.5,pch=15)
+```
+
+
+### training and test
+```{r}
+set.seed(123456)
+num=nrow(bike.day)
+n.train=ceiling(num*0.8)
+ind.train=sample((1:num),n.train)
+ind.test=(1:num)[-ind.train]
+fitTrain = glm(Rented.Bike.Count ~ .-Temperature-Humidity-Visibility, family = quasipoisson(), data = bike.day[ind.train,])
+summary(fitTrain)
+```
+```{r}
+par(mfrow=c(2,1))
+
+list=predict(fitTrain,type = "response",se.fit=T)
+#list$fit
+#list$se.fit
+pred.high=list$fit+1.96*list$se.fit
+pred.low=list$fit-1.96*list$se.fit
+plot(list$fit,type="l",col=1,ylab="Count",xlab="Day Index",main="Predicted Curve with True Points in the training set")
+#lines(pred.high,col=3)
+#lines(pred.low,col=4)
+points(bike.day[ind.train,"Rented.Bike.Count"],col=2,cex=0.5,pch=15)
+
+
+
+
+list=predict(fitTrain,newdata = bike.day[ind.test,-1],type = "response",se.fit=T)
+#list$fit
+#list$se.fit
+pred.high=list$fit+1.96*list$se.fit
+pred.low=list$fit-1.96*list$se.fit
+plot(list$fit,type="l",col=1,ylab="Count",xlab="Day Index",main="Predicted Curve with True Points in the test set")
+#lines(pred.high,col=3)
+#lines(pred.low,col=4)
+points(bike.day[ind.test,"Rented.Bike.Count"],col=2,cex=0.5,pch=15)
+
+
+
+```
+
+*some metrics*
+```{r}
+fit=list$fit
+true=bike.day[ind.test,"Rented.Bike.Count"]
+resid = true - fit
+mean(abs(resid))#mean of |resid|
+sqrt(mean((resid)^2))# mse of resid
+mean(abs(resid)/fit)#mean of abs(resid)/fitted
+mean(resid/fit)#mean of resid/fitted
+```
+
+The ability of Generalisaion is ok. Everything is ok up to now.
+
+
+
+
+
+# Some extensions
+
+* Actually it lost information to sum hour counts to day counts as above. But we had shown that it was untractable to add  crudely 23 dummy variables to the model. 
+
+* Raw data is time series and the observations are dependent. So we may use some tools from time series data analysis to exploit more information.
+
+* Or we just forget the interpretability of models and use machine learning.
+
+
+# References
+* Kejun He. '[GLM using R.](http://shjkx.wang/images/d/db/GLM_using_R.pdf)'
+
+*  Sathishkumar V E, Jangwoo Park, and Yongyun Cho. 'Using data mining techniques for bike sharing demand prediction in metropolitan city.' Computer Communications, Vol.153, pp.353-366, March, 2020
+
+*  Sathishkumar V E and Yongyun Cho. 'A rule-based model for Seoul Bike sharing demand prediction using weather data' European Journal of Remote Sensing, pp. 1-18, Feb, 2020
